@@ -5,11 +5,12 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 import os
 from pathlib import Path
+from pydantic import BaseModel, EmailStr
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -92,20 +93,36 @@ def get_activities():
     return activities
 
 
-@app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
-    """Sign up a student for an activity"""
-    # Validate activity exists
-    if activity_name not in activities:
-        raise HTTPException(status_code=404, detail="Activity not found")
+class SignupRequest(BaseModel):
+    email: EmailStr
 
-    # Get the specific activity
+
+@app.post("/activities/{activity_name}/signup")
+def signup_for_activity(activity_name: str, payload: SignupRequest):
+    """Sign up a student for an activity using a JSON body with an email."""
+    # Normalize activity lookup (allow exact name matching only)
+    if activity_name not in activities:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+
     activity = activities[activity_name]
 
     # Validate student is not already signed up
-    if email in activity["participants"]:
-        raise HTTPException(status_code=400, detail="Student is already signed up for this activity")
+    if payload.email in activity["participants"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Student is already signed up for this activity")
+
+    # Validate capacity
+    if len(activity.get("participants", [])) >= activity.get("max_participants", 0):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Activity is full")
 
     # Add student
-    activity["participants"].append(email)
-    return {"message": f"Signed up {email} for {activity_name}"}
+    activity.setdefault("participants", []).append(payload.email)
+    return {"message": f"Signed up {payload.email} for {activity_name}"}
+
+
+@app.get("/activities/{activity_name}")
+def get_activity(activity_name: str):
+    if activity_name not in activities:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+    return activities[activity_name]
